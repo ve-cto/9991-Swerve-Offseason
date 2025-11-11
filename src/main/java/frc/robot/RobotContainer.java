@@ -6,14 +6,28 @@ package frc.robot;
 
 import static edu.wpi.first.units.Units.*;
 
+import java.util.Optional;
+
+import org.photonvision.EstimatedRobotPose;
 import org.photonvision.PhotonCamera;
+import org.photonvision.PhotonPoseEstimator;
+import org.photonvision.PhotonPoseEstimator.PoseStrategy;
 
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
+import edu.wpi.first.apriltag.AprilTagFieldLayout;
+import edu.wpi.first.apriltag.AprilTagFields;
+import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.math.controller.PIDController;
+import edu.wpi.first.math.geometry.Pose3d;
 import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.geometry.Rotation3d;
+import edu.wpi.first.math.geometry.Transform3d;
+import edu.wpi.first.math.geometry.Translation3d;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
+import edu.wpi.first.wpilibj2.command.button.CommandJoystick;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.button.RobotModeTriggers;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
@@ -25,6 +39,15 @@ public class RobotContainer {
     private double MaxSpeed = TunerConstants.kSpeedAt12Volts.in(MetersPerSecond); // kSpeedAt12Volts desired top speed
     private double MaxAngularRate = RotationsPerSecond.of(0.75).in(RadiansPerSecond); // 3/4 of a rotation per second max angular velocity
 
+    public final PhotonCamera limelight = new PhotonCamera("OV9281");
+    private PIDController alignTagPid = new PIDController(0.8,0.03,0.01);
+    private PIDController strafePosePid = new PIDController(1.0, 0.0, 0.0);
+    private PIDController forwPosePid = new PIDController(1.0, 0.0, 0.0);
+    private PIDController rotPosePid = new PIDController(0.8, 0.003, 0.01);
+    public static final AprilTagFieldLayout kTagLayout = AprilTagFieldLayout.loadField(AprilTagFields.k2025ReefscapeWelded);
+    public static final Transform3d kRobotToCam = new Transform3d(new Translation3d(0.5, 0.0, 0.5), new Rotation3d(0, 0, 0));
+    public PhotonPoseEstimator photonEstimator = new PhotonPoseEstimator(kTagLayout, PoseStrategy.MULTI_TAG_PNP_ON_COPROCESSOR, kRobotToCam);
+
     /* Setting up bindings for necessary control of the swerve drive platform */
     private final SwerveRequest.FieldCentric drive = new SwerveRequest.FieldCentric()
             .withDeadband(MaxSpeed * 0.1).withRotationalDeadband(MaxAngularRate * 0.1) // Add a 10% deadband
@@ -34,15 +57,15 @@ public class RobotContainer {
 
     private final Telemetry logger = new Telemetry(MaxSpeed);
 
-    private final CommandXboxController joystick = new CommandXboxController(0);
+    private final CommandJoystick joystick = new CommandJoystick(0);
 
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
-
-    public final PhotonCamera limelight = new PhotonCamera("limelight3g");
+    
 
     public RobotContainer() {
         configureBindings();
     }
+    
 
     private void configureBindings() {
         // Note that X is defined as forward according to WPILib convention,
@@ -50,9 +73,9 @@ public class RobotContainer {
         drivetrain.setDefaultCommand(
             // Drivetrain will execute this command periodically
             drivetrain.applyRequest(() ->
-                drive.withVelocityX(-joystick.getLeftY() * MaxSpeed) // Drive forward with negative Y (forward)
-                    .withVelocityY(-joystick.getLeftX() * MaxSpeed) // Drive left with negative X (left)
-                    .withRotationalRate(-joystick.getRightX() * MaxAngularRate) // Drive counterclockwise with negative X (left)
+                drive.withVelocityX(-joystick.getY() * MaxSpeed) // Drive forward with negative Y (forward)
+                    .withVelocityY(-joystick.getX() * MaxSpeed) // Drive left with negative X (left)
+                    .withRotationalRate(-joystick.getZ() * MaxAngularRate) // Drive counterclockwise with negative X (left)
             )
         );
 
@@ -63,20 +86,99 @@ public class RobotContainer {
             drivetrain.applyRequest(() -> idle).ignoringDisable(true)
         );
 
-        joystick.a().whileTrue(drivetrain.applyRequest(() -> brake));
-        joystick.b().whileTrue(drivetrain.applyRequest(() ->
-            point.withModuleDirection(new Rotation2d(-joystick.getLeftY(), -joystick.getLeftX()))
-        ));
+        joystick.button(1).whileTrue(drivetrain.applyRequest(() -> brake));
+
+        joystick.button(10).whileTrue(
+            drivetrain.applyRequest(() -> {
+                var result = limelight.getLatestResult();
+            
+                if (result.hasTargets()) {
+                    // Use the best target’s yaw as the measurement
+                    Transform3d bestCameraToTarget = result.getBestTarget().getBestCameraToTarget();
+                    var best =  result.getBestTarget();
+                    
+                    // forwPosePid
+                    // rotPosePid
+                    // strafePosePid
+                    double forwardTagOffset = bestCameraToTarget.getX();
+                    double strafeTagOffset = bestCameraToTarget.getY();
+                    double rotationTagOffset = bestCameraToTarget.getRotation().getZ();
+                    System.out.println("poseAmbiguity=" + best.getPoseAmbiguity());
+                    Transform3d t = best.getBestCameraToTarget(); // try this before alternate
+                    System.out.println("Transform: " + t);
+
+                    //// System.out.print("Forward: " + forwardTagOffset + " Strafe: " + strafeTagOffset + " Rotation: " + rotationTagOffset + "\n");
+                    
+                    return drive.withVelocityX(MathUtil.clamp(forwPosePid.calculate(forwardTagOffset, 0), -0.5, 0.5))
+                        .withVelocityY(MathUtil.clamp(strafePosePid.calculate(strafeTagOffset, 0), -0.5, 0.5))
+                        .withRotationalRate(MathUtil.clamp(rotPosePid.calculate(rotationTagOffset, 0), -0.8, 0.8)
+                    );
+                } else {
+                    // no target detected, stop
+                    return drive.withVelocityX(0)
+                                .withVelocityY(0)
+                                .withRotationalRate(0);
+                }
+            })
+        );
+
+        joystick.button(11).whileTrue(
+            drivetrain.applyRequest(() -> {
+                var result = limelight.getLatestResult();
+                
+                if (result.hasTargets()) {
+                    // Use the best target’s yaw as the measurement
+                    double yaw = result.getBestTarget().getYaw();
+                    // System.out.print("Yaw: " + yaw + "\n");
+                    return drive.withVelocityX(0)
+                                .withVelocityY(0)
+                                .withRotationalRate(
+                                    MathUtil.clamp(alignTagPid.calculate(yaw, 0), -1.5, 1.5)
+                                );
+                } else {
+                    // no target detected, stop
+                    return drive.withVelocityX(0)
+                                .withVelocityY(0)
+                                .withRotationalRate(0);
+                }
+            })
+        );
+
+        joystick.button(12).whileTrue(
+            drivetrain.applyRequest(() -> {
+                var result = limelight.getLatestResult();
+                if (result.hasTargets()) {
+                    // Use the best target’s yaw as the rotation force, but allow joystick translation at the same time
+                    double yaw = result.getBestTarget().getYaw();
+                    return drive.withVelocityX(-joystick.getY() * MaxSpeed)
+                                .withVelocityY(-joystick.getX() * MaxSpeed)
+                                .withRotationalRate(
+                                    MathUtil.clamp(alignTagPid.calculate(yaw, 0), -1.5, 1.5)
+                                );
+                } else {
+                    // no target detected, stop
+                    return drive.withVelocityX(-joystick.getY() * MaxSpeed)
+                                .withVelocityY(-joystick.getX() * MaxSpeed)
+                                .withRotationalRate(0);
+                }
+            })
+        );
+
+
+
+        // joystick.b().whileTrue(drivetrain.applyRequest(() ->
+        //     point.withModuleDirection(new Rotation2d(-joystick.getY(), -joystick.getX()))
+        // ));
 
         // Run SysId routines when holding back/start and X/Y.
         // Note that each routine should be run exactly once in a single log.
-        joystick.back().and(joystick.y()).whileTrue(drivetrain.sysIdDynamic(Direction.kForward));
-        joystick.back().and(joystick.x()).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
-        joystick.start().and(joystick.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
-        joystick.start().and(joystick.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
+        // joystick.back().and(joystick.y()).whileTrue(drivetrain.sysIdDynamic(Direction.kForward));
+        // joystick.back().and(joystick.x()).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
+        // joystick.start().and(joystick.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
+        // joystick.start().and(joystick.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
 
         // reset the field-centric heading on left bumper press
-        joystick.leftBumper().onTrue(drivetrain.runOnce(() -> drivetrain.seedFieldCentric()));
+        joystick.button(2).onTrue(drivetrain.runOnce(() -> drivetrain.seedFieldCentric()));
 
         drivetrain.registerTelemetry(logger::telemeterize);
     }
