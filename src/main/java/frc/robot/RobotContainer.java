@@ -40,9 +40,9 @@ public class RobotContainer {
     private double MaxAngularRate = RotationsPerSecond.of(0.75).in(RadiansPerSecond); // 3/4 of a rotation per second max angular velocity
 
     public final PhotonCamera limelight = new PhotonCamera("OV9281");
-    private PIDController alignTagPid = new PIDController(0.8,0.03,0.01);
-    private PIDController strafePosePid = new PIDController(1.0, 0.0, 0.0);
-    private PIDController forwPosePid = new PIDController(1.0, 0.0, 0.0);
+    private PIDController alignTagPid = new PIDController(0.2,0.0,0.0);
+    private PIDController strafePosePid = new PIDController(2.6, 0.003, 0.0);
+    private PIDController forwPosePid = new PIDController(2.0, 0.003, 0.0);
     private PIDController rotPosePid = new PIDController(0.8, 0.003, 0.01);
     public static final AprilTagFieldLayout kTagLayout = AprilTagFieldLayout.loadField(AprilTagFields.k2025ReefscapeWelded);
     public static final Transform3d kRobotToCam = new Transform3d(new Translation3d(0.5, 0.0, 0.5), new Rotation3d(0, 0, 0));
@@ -88,7 +88,7 @@ public class RobotContainer {
 
         joystick.button(1).whileTrue(drivetrain.applyRequest(() -> brake));
 
-        joystick.button(10).whileTrue(
+        joystick.button(3).whileTrue(
             drivetrain.applyRequest(() -> {
                 var result = limelight.getLatestResult();
             
@@ -100,18 +100,21 @@ public class RobotContainer {
                     // forwPosePid
                     // rotPosePid
                     // strafePosePid
-                    double forwardTagOffset = bestCameraToTarget.getX();
+                    double forwardTagOffset = bestCameraToTarget.getX()-2;
                     double strafeTagOffset = bestCameraToTarget.getY();
-                    double rotationTagOffset = bestCameraToTarget.getRotation().getZ();
-                    System.out.println("poseAmbiguity=" + best.getPoseAmbiguity());
+                    Rotation3d rotationTag = bestCameraToTarget.getRotation();
+                    double rotationTagOffset = rotationTag.getAngle();
+                    // System.out.println("poseAmbiguity=" + best.getPoseAmbiguity());
                     Transform3d t = best.getBestCameraToTarget(); // try this before alternate
                     System.out.println("Transform: " + t);
 
                     //// System.out.print("Forward: " + forwardTagOffset + " Strafe: " + strafeTagOffset + " Rotation: " + rotationTagOffset + "\n");
                     
-                    return drive.withVelocityX(MathUtil.clamp(forwPosePid.calculate(forwardTagOffset, 0), -0.5, 0.5))
-                        .withVelocityY(MathUtil.clamp(strafePosePid.calculate(strafeTagOffset, 0), -0.5, 0.5))
-                        .withRotationalRate(MathUtil.clamp(rotPosePid.calculate(rotationTagOffset, 0), -0.8, 0.8)
+                    return drive.withVelocityX(-MathUtil.clamp(forwPosePid.calculate(forwardTagOffset, 0), -0.9, 0.9))
+                        .withVelocityY(-MathUtil.clamp(strafePosePid.calculate(strafeTagOffset, 0), -0.9, 0.9))
+                        // .withRotationalRate(MathUtil.clamp(rotPosePid.calculate(rotationTagOffset, 0), -0.4, 0.4)
+                        // .withRotationalRate(-joystick.getZ() * MaxAngularRate
+                        .withRotationalRate(MathUtil.clamp(alignTagPid.calculate(result.getBestTarget().getYaw(), 0), -1.5, 1.5)
                     );
                 } else {
                     // no target detected, stop
