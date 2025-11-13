@@ -25,6 +25,10 @@ import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Rotation3d;
 import edu.wpi.first.math.geometry.Transform3d;
 import edu.wpi.first.math.geometry.Translation3d;
+import edu.wpi.first.networktables.DoublePublisher;
+import edu.wpi.first.networktables.DoubleTopic;
+import edu.wpi.first.networktables.NetworkTable;
+import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.button.CommandJoystick;
@@ -40,9 +44,9 @@ public class RobotContainer {
     private double MaxAngularRate = RotationsPerSecond.of(0.75).in(RadiansPerSecond); // 3/4 of a rotation per second max angular velocity
 
     public final PhotonCamera limelight = new PhotonCamera("OV9281");
-    private PIDController alignTagPid = new PIDController(0.2,0.0,0.0);
-    private PIDController strafePosePid = new PIDController(2.6, 0.003, 0.0);
-    private PIDController forwPosePid = new PIDController(2.0, 0.003, 0.0);
+    private PIDController alignTagPid = new PIDController(6,0.0,0.0);
+    private PIDController strafePosePid = new PIDController(5.0, 0.003, 0.0);
+    private PIDController forwPosePid = new PIDController(4.0, 0.003, 0.0);
     private PIDController rotPosePid = new PIDController(0.8, 0.003, 0.01);
     public static final AprilTagFieldLayout kTagLayout = AprilTagFieldLayout.loadField(AprilTagFields.k2025ReefscapeWelded);
     public static final Transform3d kRobotToCam = new Transform3d(new Translation3d(0.5, 0.0, 0.5), new Rotation3d(0, 0, 0));
@@ -60,10 +64,34 @@ public class RobotContainer {
     private final CommandJoystick joystick = new CommandJoystick(0);
 
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
+
+    // final DoublePublisher rot1;
+    // final DoublePublisher rot2;
+    // final DoublePublisher rot3;
+    // final DoublePublisher rot4;
+    // final DoublePublisher rot5;
+    // final DoublePublisher rot6;
+    // final DoubleTopic rotTopic;
+
+    private final NetworkTableInstance networkTable = NetworkTableInstance.getDefault();
+    private final NetworkTable camTable = networkTable.getTable("Cam");
+    DoublePublisher rot1;
+    DoublePublisher rot2;
+    DoublePublisher rot3;
+    DoublePublisher rot4;
+    DoublePublisher rot5;
+    DoublePublisher rot6;
+
     
 
     public RobotContainer() {
         configureBindings();
+        rot1 = camTable.getDoubleTopic("rot1").publish();
+        rot2 = camTable.getDoubleTopic("rot2").publish();
+        rot3 = camTable.getDoubleTopic("rot3").publish();
+        rot4 = camTable.getDoubleTopic("rot4").publish();
+        rot5 = camTable.getDoubleTopic("rot5").publish();
+        rot6 = camTable.getDoubleTopic("rot6").publish();
     }
     
 
@@ -100,13 +128,22 @@ public class RobotContainer {
                     // forwPosePid
                     // rotPosePid
                     // strafePosePid
-                    double forwardTagOffset = bestCameraToTarget.getX()-2;
+                    double forwardTagOffset = bestCameraToTarget.getX() - (joystick.getThrottle() + 1);
                     double strafeTagOffset = bestCameraToTarget.getY();
                     Rotation3d rotationTag = bestCameraToTarget.getRotation();
-                    double rotationTagOffset = rotationTag.getAngle();
+                    double rotationTagOffset = rotationTag.getQuaternion().getX();
+
+                    rot1.set(bestCameraToTarget.getRotation().getX());
+                    rot2.set(bestCameraToTarget.getRotation().getY());
+                    rot3.set(bestCameraToTarget.getRotation().getZ());
+                    rot4.set(bestCameraToTarget.getRotation().getAngle());
+                    rot5.set(bestCameraToTarget.getRotation().getQuaternion().getW());
+                    rot6.set(bestCameraToTarget.getRotation().getQuaternion().getX());
+
+
                     // System.out.println("poseAmbiguity=" + best.getPoseAmbiguity());
                     Transform3d t = best.getBestCameraToTarget(); // try this before alternate
-                    System.out.println("Transform: " + t);
+                    // System.out.println("Transform: " + t);
 
                     //// System.out.print("Forward: " + forwardTagOffset + " Strafe: " + strafeTagOffset + " Rotation: " + rotationTagOffset + "\n");
                     
@@ -114,7 +151,7 @@ public class RobotContainer {
                         .withVelocityY(-MathUtil.clamp(strafePosePid.calculate(strafeTagOffset, 0), -0.9, 0.9))
                         // .withRotationalRate(MathUtil.clamp(rotPosePid.calculate(rotationTagOffset, 0), -0.4, 0.4)
                         // .withRotationalRate(-joystick.getZ() * MaxAngularRate
-                        .withRotationalRate(MathUtil.clamp(alignTagPid.calculate(result.getBestTarget().getYaw(), 0), -1.5, 1.5)
+                        .withRotationalRate(MathUtil.clamp(alignTagPid.calculate(rotationTagOffset, 0), -1.0, 1.0)
                     );
                 } else {
                     // no target detected, stop
@@ -188,5 +225,10 @@ public class RobotContainer {
 
     public Command getAutonomousCommand() {
         return Commands.print("No autonomous command configured");
+    }
+
+    public Command pushLimelightValuesCommand() {
+        
+        return Commands.none();
     }
 }
